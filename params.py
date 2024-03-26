@@ -1,3 +1,8 @@
+"""
+Adapted from https://github.com/mlfoundations/open_clip. 
+Copyright (c) 2012-2021 Gabriel Ilharco, Mitchell Wortsman, Nicholas Carlini, Rohan Taori, Achal Dave, Vaishaal Shankar, John Miller, Hongseok Namkoong, Hannaneh Hajishirzi, Ali Farhadi, Ludwig Schmidt
+"""
+
 import argparse
 import ast
 
@@ -36,13 +41,6 @@ def parse_args(args):
         type=str,
         default=None,
         help="Path to file(s) with training data. When using webdataset, multiple datasources can be combined using the `::` separator.",
-    )
-    parser.add_argument(
-        "--train_dataset",
-        type=str,
-        default=None,
-        choices=[None, "sqlite"],
-        help="An additional choice for user defined dataset class.",
     )
     parser.add_argument(
         "--train-data-upsampling-factors",
@@ -133,7 +131,7 @@ def parse_args(args):
         help="Optional identifier for the experiment when storing logs. Otherwise use current time.",
     )
     parser.add_argument(
-        "--workers", type=int, default=4, help="Number of dataloader workers per GPU."
+        "--workers", type=int, default=1, help="Number of dataloader workers per GPU."
     )
     parser.add_argument(
         "--batch-size", type=int, default=64, help="Batch size per GPU."
@@ -201,7 +199,7 @@ def parse_args(args):
     )
     parser.add_argument(
         "--precision",
-        choices=["amp", "amp_bf16", "amp_bfloat16", "bf16", "fp16", "pure_bf16", "pure_fp16", "fp32"],
+        choices=["amp", "amp_bf16", "amp_bfloat16", "bf16", "fp16", "fp32"],
         default="amp",
         help="Floating point precision."
     )
@@ -305,12 +303,6 @@ def parse_args(args):
         help="torch.jit.script the model, also uses jit version of OpenAI models if pretrained=='openai'",
     )
     parser.add_argument(
-        "--torchcompile",
-        default=False,
-        action='store_true',
-        help="torch.compile() the model, requires pytorch 2.0 or later.",
-    )
-    parser.add_argument(
         "--trace",
         default=False,
         action='store_true',
@@ -393,13 +385,13 @@ def parse_args(args):
         "--lock-text-unlocked-layers",
         type=int,
         default=0,
-        help="Leave last n text tower layer groups unlocked.",
+        help="Leave last n image tower layer groups unlocked.",
     )
     parser.add_argument(
         "--lock-text-freeze-layer-norm",
         default=False,
         action='store_true',
-        help="Freeze LayerNorm running stats in text tower for any locked layers.",
+        help="Freeze BatchNorm running stats in image tower for any locked layers.",
     )
     parser.add_argument(
         "--log-every-n-steps",
@@ -453,19 +445,82 @@ def parse_args(args):
         default=None,
         help='Which pre-trained weights to distill from, if any.'
     )
+    # newly added flag for adding random rotation into data augmentation
     parser.add_argument(
-        "--use-bnb-linear",
-        default=None,
-        help='Replace the network linear layers from the bitsandbytes library. '
-        'Allows int8 training/inference, etc.'
-    )
-    parser.add_argument(
-        "--siglip",
-        default=False,
+        "--random-rotation",
         action="store_true",
-        help='Use SigLip (sigmoid) loss.'
+        default=False,
+        help="If True, add random rotation into image transform for data augmentation (only for training)."
     )
-
+    # newly added for testing zero-shot and linear probe classification (custom dataset)
+    parser.add_argument(
+        "--datasets-for-testing",
+        nargs='*',
+        type=str,
+        default=None,
+        help="A list of names of datasets for testing zero-shot classification testing",
+    )
+    parser.add_argument(
+        "--classification-mode",
+        type=str,
+        default="multiclass",
+        help="Choose either binary or multiclass",
+    )
+    parser.add_argument(
+        "--test-data",
+        type=str,
+        default=None,
+        help="Path to file(s) with test data (e.g., for testing zero-shot classification)",
+    )
+    parser.add_argument(
+        "--classnames",
+        type=str,
+        default=None,
+        help="Path to txt file containing class names",
+    )
+    parser.add_argument(
+        "--test-data-name",
+        type=str,
+        default=None,
+        help="The name of the test data (e.g., RSICD, EuroSat)",
+    )
+    parser.add_argument(
+        "--csv-class-key",
+        type=str,
+        default="label",
+        help="For csv-like datasets, the name of the key for image labels (for classification)."
+    )
+    parser.add_argument(
+        "--csv-actual-label-key",
+        type=str,
+        default="binary",
+        help="If classification_model=binary, then specify the name of the key for actual binary labels (i.e., 0/1)."
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=None,
+        help="The regularization multiplier of logistic regression to try for linear probing. If None, do a search."
+    )
+    parser.add_argument(
+        "--samples-per-class",
+        type=str,
+        default=None,
+        help="Numbers of samples per class to train logistic regression for linear probing. If None, use full dataset."
+    )
+    parser.add_argument(
+        "--test-result-save-path",
+        type=str,
+        default=None,
+        help="The path to save test results as a pickle file."
+    )
+    parser.add_argument(
+        "--debugging",
+        action="store_true",
+        default=False,
+        help="Whether to use debugging mode, which will return more information."
+    )
+    
     args = parser.parse_args(args)
 
     # If some params are not passed, we use the default values based on model name.

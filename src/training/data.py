@@ -19,6 +19,7 @@ from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler, IterableD
 from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
+from .db_data import SQLiteDataset
 
 try:
     import horovod.torch as hvd
@@ -472,6 +473,34 @@ def get_csv_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
 
     return DataInfo(dataloader, sampler)
 
+def get_db_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
+    annotation_db = args.annotation_db
+    metadata_db = args.metadata_db
+    img_data_backend = eval(args.img_data_backend)   
+    assert isinstance(img_data_backend, dict)
+    assert annotation_db and metadata_db and img_data_backend
+    dataset = SQLiteDataset(annotation_db,
+                            metadata_db,
+                            preprocess_fn,
+                            img_data_backend,
+                            tokenizer=tokenizer)
+    num_samples = len(dataset)
+    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
+    shuffle = is_train and sampler is None
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=shuffle,
+        num_workers=args.workers,
+        pin_memory=True,
+        sampler=sampler,
+        drop_last=is_train,
+    )
+    dataloader.num_samples = num_samples
+    dataloader.num_batches = len(dataloader)
+
+    return DataInfo(dataloader, sampler)
 
 class SyntheticDataset(Dataset):
 
@@ -526,6 +555,8 @@ def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
 def get_dataset_fn(data_path, dataset_type):
     if dataset_type == "webdataset":
         return get_wds_dataset
+    elif dataset_type == "sqlite":
+        return get_db_dataset
     elif dataset_type == "csv":
         return get_csv_dataset
     elif dataset_type == "synthetic":
@@ -546,6 +577,10 @@ def get_dataset_fn(data_path, dataset_type):
 def get_data(args, preprocess_fns, epoch=0, tokenizer=None):
     preprocess_train, preprocess_val = preprocess_fns
     data = {}
+
+    if args.train_dataset:
+        data["train"] = get_dataset_fn(args.train_dataset, args.dataset_type)(
+            args, preprocess_train, is_train=True, epoch=epoch, tokenizer=tokenizer)
 
     if args.train_data or args.dataset_type == "synthetic":
         data["train"] = get_dataset_fn(args.train_data, args.dataset_type)(
