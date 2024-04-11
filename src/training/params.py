@@ -38,7 +38,7 @@ def parse_args(args):
         help="Path to file(s) with training data. When using webdataset, multiple datasources can be combined using the `::` separator.",
     )
     parser.add_argument(
-        "--train_dataset",
+        "--train-dataset",
         type=str,
         default=None,
         choices=[None, "sqlite"],

@@ -1,5 +1,5 @@
 # Please replace this with the root directory of benchmark datasets
-BENCHMARK_DATASET_ROOT_DIR = '/PATH/TO/THE/ROOT/DIRECTORY/OF/BENCHMARK/DATASETS'
+BENCHMARK_DATASET_ROOT_DIR = '{}'
 
 BENCHMARK_DATASET_INFOMATION = {
     'aid': {

@@ -34,13 +34,39 @@ def parse_args(args):
         "--root-data-dir",
         type=str,
         default=None,
-        help="Root directory to datasets",
+        help="Root directory to datasets. This is for CSV datasets",
     )
     parser.add_argument(
         "--train-data",
         type=str,
         default=None,
         help="Path to file(s) with training data. When using webdataset, multiple datasources can be combined using the `::` separator.",
+    )
+    # newly add argument for user defined dataset class
+    parser.add_argument(
+        "--train-dataset",
+        type=str,
+        default=None,
+        choices=[None, "sqlite"],
+        help="An additional choice for user defined dataset class.",
+    )
+    parser.add_argument(
+        "--annotation-db",
+        type=str,
+        default=None,
+        help="Path to sqlite database with annotations for training data.",
+    )
+    parser.add_argument(
+        "--metadata-db",
+        type=str,
+        default=None,
+        help="Path to sqlite database with metadata for training data.",
+    )
+    parser.add_argument(
+        "--img-data-backend",
+        type=str,
+        default="dict(type='disk', root='.')",
+        help="Which backend to use for image data. Options: disk, mangodb, webdataset",
     )
     parser.add_argument(
         "--train-data-upsampling-factors",
@@ -303,6 +329,12 @@ def parse_args(args):
         help="torch.jit.script the model, also uses jit version of OpenAI models if pretrained=='openai'",
     )
     parser.add_argument(
+        "--torchcompile",
+        default=False,
+        action='store_true',
+        help="torch.compile() the model, requires pytorch 2.0 or later.",
+    )
+    parser.add_argument(
         "--trace",
         default=False,
         action='store_true',
@@ -445,13 +477,19 @@ def parse_args(args):
         default=None,
         help='Which pre-trained weights to distill from, if any.'
     )
-    # newly added flag for adding random rotation into data augmentation
     parser.add_argument(
-        "--random-rotation",
-        action="store_true",
-        default=False,
-        help="If True, add random rotation into image transform for data augmentation (only for training)."
+        "--use-bnb-linear",
+        default=None,
+        help='Replace the network linear layers from the bitsandbytes library. '
+        'Allows int8 training/inference, etc.'
     )
+    parser.add_argument(
+        "--siglip",
+        default=False,
+        action="store_true",
+        help='Use SigLip (sigmoid) loss.'
+    )
+
     # newly added for testing zero-shot and linear probe classification (custom dataset)
     parser.add_argument(
         "--datasets-for-testing",
@@ -459,6 +497,12 @@ def parse_args(args):
         type=str,
         default=None,
         help="A list of names of datasets for testing zero-shot classification testing",
+    )
+    parser.add_argument(
+        "--test-dataset-root",
+        type=str,
+        default='/path/to/test/datasets/',
+        help="The root directory of the test datasets (e.g., for testing zero-shot classification). This is supplimentary to datasets-for-testing",
     )
     parser.add_argument(
         "--classification-mode",

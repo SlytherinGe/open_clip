@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from PIL import Image
 import os
+import logging
 import sys
 import pandas as pd
 import pickle
@@ -252,8 +253,14 @@ def get_test_dataloaders(args, preprocess_fn):
         benchmark_dataset_info = {}
         for dataset_name in args.datasets_for_testing:
             if dataset_name not in BENCHMARK_DATASET_INFOMATION:
+                print(dataset_name)
+                logging.error(f'Dataset {dataset_name} is not in BENCHMARK_DATASET_INFOMATION.')
                 raise ValueError(f'Dataset {dataset_name} is not in BENCHMARK_DATASET_INFOMATION.')
             benchmark_dataset_info[dataset_name] = BENCHMARK_DATASET_INFOMATION[dataset_name]
+            benchmark_dataset_info[dataset_name]['test_data'] = \
+            benchmark_dataset_info[dataset_name]['test_data'].format(args.test_dataset_root)
+            benchmark_dataset_info[dataset_name]['classnames'] = \
+            benchmark_dataset_info[dataset_name]['classnames'].format(args.test_dataset_root)
             
     elif args.test_data_name is not None:
         benchmark_dataset_info = {
@@ -287,7 +294,7 @@ def get_test_dataloaders(args, preprocess_fn):
                 label_list, 
                 benchmark_dataset_info[dataset_name]['csv_separator'],
                 debugging=args.debugging,
-                root_data_dir=args.root_data_dir,
+                root_data_dir=args.test_dataset_root,
             )
         else:
             ds = CsvDatasetForClassification(
@@ -298,7 +305,7 @@ def get_test_dataloaders(args, preprocess_fn):
                 label_list, 
                 benchmark_dataset_info[dataset_name]['csv_separator'], 
                 debugging=args.debugging,
-                root_data_dir=args.root_data_dir,
+                root_data_dir=args.test_dataset_root,
             )
 
         test_dataloaders[dataset_name] = {

@@ -1,12 +1,8 @@
-import glob
+import json
 import logging
 import os
-import re
-import subprocess
 import sys
-import random
 from datetime import datetime
-from functools import partial
 
 import numpy as np
 import torch
@@ -32,41 +28,53 @@ from open_clip import create_model_and_transforms, trace_model, get_tokenizer, c
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, broadcast_object
 from training.logger import setup_logging
-from training.params import parse_args
 from training.scheduler import cosine_lr, const_lr, const_lr_cooldown
 from training.train import train_one_epoch, evaluate
 from training.file_utils import pt_load, check_exists, start_sync_process, remote_sync
+from training.main import get_latest_checkpoint, copy_codebase
+from params import parse_args
+from test_zero_shot_classification import *
 
 
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
 
+def zero_shot_eval_during_training(model, test_dataloaders, epoch, args, tb_writer=None):
+    logging.info('Starting zero-shot evaluation.')
+    zero_shot_metrics = {}
+    for dataset_name in test_dataloaders:
+        logging.info(f'Evaluating zero-shot classification for dataset {dataset_name}')
+        results = test_zero_shot_classification(model, test_dataloaders[dataset_name]['dataloader'], 
+                                                test_dataloaders[dataset_name]['labels'], 
+                                                test_dataloaders[dataset_name]['is_binary'], args, 
+                                                dataset_name=dataset_name, debugging=args.debugging)
+        for k, v in results.items():
+            if type(v) in [float, int, np.float16, np.float32, np.float64, np.int8, np.int16, np.int32, np.int64]:
+                zero_shot_metrics[k] = v
+    logging.info(
+        f"Zero-Shot Eval Epoch: {epoch} "
+        + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in zero_shot_metrics.items()])
+    )
 
-def random_seed(seed=42, rank=0):
-    torch.manual_seed(seed + rank)
-    np.random.seed(seed + rank)
-    random.seed(seed + rank)
+    if args.save_logs:
+        for name, val in zero_shot_metrics.items():
+            if tb_writer is not None:
+                tb_writer.add_scalar(f"val/{name}", val, epoch)
 
+        with open(os.path.join(args.checkpoint_path, "results.jsonl"), "a+") as f:
+            f.write(json.dumps(zero_shot_metrics))
+            f.write("\n")
 
-def natural_key(string_):
-    """See http://www.codinghorror.com/blog/archives/001018.html"""
-    return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_.lower())]
+    # report to wandb
+    # if args.wandb:
+        assert wandb is not None, 'Please install wandb.'
+        log_dict = {}
+        for name, val in zero_shot_metrics.items():
+            log_dict[f"val/{name}"] = val
+        wandb.log(log_dict, step=epoch)
 
-
-def get_latest_checkpoint(path: str, remote : bool):
-    # as writen, this glob recurses, so can pick up checkpoints across multiple sub-folders
-    if remote:
-        result = subprocess.run(["aws", "s3", "ls", path + "/"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        print(result)
-        if result.returncode == 1:
-            return None
-        checkpoints = [os.path.join(path, x.split(' ')[-1]) for x in result.stdout.decode().split('\n')[:-1]]
-    else:
-        checkpoints = glob.glob(path + '**/*.pt', recursive=True)
-    if checkpoints:
-        checkpoints = sorted(checkpoints, key=natural_key)
-        return checkpoints[-1]
-    return None
-
+    logging.info('Finished zero-shot evaluation.')
+    
+    return zero_shot_metrics
 
 def main(args):
     args = parse_args(args)
@@ -360,7 +368,12 @@ def main(args):
         epoch=start_epoch,
         tokenizer=tokenizer,
     )
-    assert len(data), 'At least one train or eval dataset must be specified.'
+    # initialize benchmark dataloaders for testing zero-shot classification
+    if args.datasets_for_testing is not None or args.test_data_name is not None:
+        test_dataloaders = get_test_dataloaders(args, preprocess_val)
+    else:
+        test_dataloaders = None
+    assert len(data) or test_dataloaders is not None, 'At least one train, eval or test dataset must be specified.'
 
     # create scheduler if train
     scheduler = None
@@ -392,9 +405,9 @@ def main(args):
     if args.wandb and is_master(args):
         assert wandb is not None, 'Please install wandb.'
         logging.debug('Starting wandb.')
-        args.train_sz = data["train"].dataloader.num_samples
-        if args.val_data is not None:
-            args.val_sz = data["val"].dataloader.num_samples
+        # args.train_sz = data["train"].dataloader.num_samples
+        # if args.val_data is not None:
+        #     args.val_sz = data["val"].dataloader.num_samples
         # you will have to configure this for your project!
         wandb.init(
             project=args.wandb_project_name,
@@ -424,7 +437,12 @@ def main(args):
             from open_clip.utils import convert_int8_model_to_inference_mode
             convert_int8_model_to_inference_mode(model)
         # Evaluate.
-        evaluate(model, data, start_epoch, args, tb_writer=writer, tokenizer=tokenizer)
+        if 'val' in data:
+            evaluate(model, data, start_epoch, args, tb_writer=writer, tokenizer=tokenizer)
+            return
+        if test_dataloaders is not None:
+            eval_metrics = zero_shot_eval_during_training(model, test_dataloaders, start_epoch, args, tb_writer=writer)
+            print(eval_metrics)
         return
 
     loss = create_loss(args)
@@ -438,6 +456,15 @@ def main(args):
 
         if any(v in data for v in ('val', 'imagenet-val', 'imagenet-v2')):
             evaluate(model, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
+
+        # evaluate zero-shot classification
+        if (test_dataloaders is not None) and (args.zeroshot_frequency and ((epoch % args.zeroshot_frequency) == 0 or epoch == args.epochs)):
+            eval_metrics = zero_shot_eval_during_training(model, test_dataloaders, completed_epoch, args, tb_writer=writer)
+
+            if args.wandb and is_master(args):
+                assert wandb is not None, 'Please install wandb.'
+                for name, val in eval_metrics.items():
+                    wandb.log({f"eval/{name}": val, 'epoch': completed_epoch})
 
         # Saving checkpoints.
         if args.save_logs:
@@ -486,22 +513,6 @@ def main(args):
         else:
             logging.info('Final remote sync failed.')
     
-
-def copy_codebase(args):
-    from shutil import copytree, ignore_patterns
-    new_code_path = os.path.join(args.logs, args.name, "code")
-    if os.path.exists(new_code_path):
-        print(
-            f"Error. Experiment already exists at {new_code_path}. Use --name to specify a new experiment."
-        )
-        return -1
-    print(f"Copying codebase to {new_code_path}")
-    current_code_path = os.path.realpath(__file__)
-    for _ in range(3):
-        current_code_path = os.path.dirname(current_code_path)
-    copytree(current_code_path, new_code_path, ignore=ignore_patterns('log', 'logs', 'wandb'))
-    print("Done copying code.")
-    return 1
 
 
 if __name__ == "__main__":

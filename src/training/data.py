@@ -5,6 +5,7 @@ import math
 import os
 import random
 import sys
+import logging
 import braceexpand
 from dataclasses import dataclass
 from multiprocessing import Value
@@ -487,13 +488,13 @@ def get_db_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
     num_samples = len(dataset)
     sampler = DistributedSampler(dataset) if args.distributed and is_train else None
     shuffle = is_train and sampler is None
-
+    # FIXME: pin_memory=True comsumes more memory than pin_memory=False, but it's faster.
     dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
         shuffle=shuffle,
         num_workers=args.workers,
-        pin_memory=True,
+        pin_memory=False,
         sampler=sampler,
         drop_last=is_train,
     )
@@ -553,6 +554,7 @@ def get_synthetic_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None
 
 
 def get_dataset_fn(data_path, dataset_type):
+    print(dataset_type)
     if dataset_type == "webdataset":
         return get_wds_dataset
     elif dataset_type == "sqlite":
@@ -567,6 +569,8 @@ def get_dataset_fn(data_path, dataset_type):
             return get_csv_dataset
         elif ext in ['tar']:
             return get_wds_dataset
+        elif ext in ['db', 'sqlite']:
+            return get_db_dataset
         else:
             raise ValueError(
                 f"Tried to figure out dataset type, but failed for extension {ext}.")
