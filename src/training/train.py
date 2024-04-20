@@ -240,6 +240,7 @@ def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist
             if args.wandb:
                 assert wandb is not None, 'Please install wandb.'
                 log_data['step'] = step  # for backwards compatibility
+                log_data['step time'] = time.time() - data['start_time']
                 wandb.log(log_data, step=step)
             
             # resetting batch / data time meters per log window

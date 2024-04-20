@@ -497,6 +497,7 @@ def get_db_dataset(args, preprocess_fn, is_train, epoch=0, tokenizer=None):
         pin_memory=False,
         sampler=sampler,
         drop_last=is_train,
+        prefetch_factor=16,
     )
     dataloader.num_samples = num_samples
     dataloader.num_batches = len(dataloader)

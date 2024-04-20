@@ -27,7 +27,7 @@ template_dict = {
         lambda c: f'a satellite photo of {c}.',
         lambda c: f'a satellite image of {c}',
     ],
-    'rsicb256': [
+    'rsicb': [
         lambda c: f'a satellite photo of {c}.',
         lambda c: f'a satellite image of {c}',
     ],

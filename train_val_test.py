@@ -7,7 +7,8 @@ from datetime import datetime
 import numpy as np
 import torch
 from torch import optim
-from torch.cuda.amp import GradScaler
+from torch.cuda.amp.grad_scaler import GradScaler
+import time
 
 try:
     import wandb
@@ -446,6 +447,8 @@ def main(args):
         return
 
     loss = create_loss(args)
+
+    data['start_time'] = time.time()
 
     for epoch in range(start_epoch, args.epochs):
         if is_master(args):

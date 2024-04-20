@@ -14,9 +14,13 @@ import io
 from tqdm import tqdm
 
 def _read_image_on_disk_init(img_data_backend, read_kwargs):
+    logging.info(f'Using disk backend for image reading.')
+    logging.info(f'Backend parameters: {img_data_backend}')
     return read_kwargs
 
 def _read_image_on_mongo_init(img_data_backend, read_kwargs):
+    logging.info(f'Using mongo backend for image reading.')
+    logging.info(f'Backend parameters: {img_data_backend}')
     mongo_uri = img_data_backend['mongo_uri']
     mongo_client = MongoClient(mongo_uri)
     collection_buf = {}
@@ -29,7 +33,6 @@ def _read_image_on_mongo_init(img_data_backend, read_kwargs):
             # iterate through all the collections
             collections = mongo_client[dataset].list_collection_names()
             for collection in tqdm(collections, desc=f'Creating indexes for {dataset}'):
-                mongo_client[dataset][collection].create_index([('name', 1)], unique=True)
                 collection_buf[f'{dataset}'][f'{collection}'] = mongo_client[dataset][collection]
     
     read_kwargs.pop('mongo_uri')
@@ -45,6 +48,7 @@ def _read_image_on_disk(image_collection, image_name, patch_name, ext, root, **k
         if e == 'OSError':
             ImageFile.LOAD_TRUNCATED_IMAGES = True
             img = Image.open(img_path).convert('RGB')
+            ImageFile.LOAD_TRUNCATED_IMAGES = False
         else:
             raise e
     return img
@@ -52,10 +56,10 @@ def _read_image_on_disk(image_collection, image_name, patch_name, ext, root, **k
 def _read_image_on_mongo(image_collection, image_name, patch_name, ext, mongo_client, collection_buf, **kwargs):
     # this may be confusing, but the image_collection is actually the database name in mongo
     # and the image_name is the collection name
-    mongo_collection = collection_buf[f'{image_collection}'][f'{image_name}']
+    mongo_collection = collection_buf['RSVLD'][f'{image_collection}']
     # mongo_db = mongo_client[image_collection]
     # mongo_collection = mongo_db[image_name]
-    img_data = mongo_collection.find_one({'name': patch_name})
+    img_data = mongo_collection.find_one({'patch_name': patch_name, 'image_name': image_name})
     try:
         img = Image.open(io.BytesIO(img_data['patch'])).convert('RGB')
     except Exception as e:
@@ -63,8 +67,10 @@ def _read_image_on_mongo(image_collection, image_name, patch_name, ext, mongo_cl
         if e == 'OSError':
             ImageFile.LOAD_TRUNCATED_IMAGES = True
             img = Image.open(io.BytesIO(img_data['patch'])).convert('RGB')
+            ImageFile.LOAD_TRUNCATED_IMAGES = False
         else:
-            raise e
+            print(img_data)
+            return Image.new('RGB', (448, 448), (255, 255, 255))
     return img
 
 class SQLiteDataset(Dataset):
@@ -89,7 +95,11 @@ class SQLiteDataset(Dataset):
         logging.info(f'annotation_db: {self.annotation_db}, meta_db: {self.meta_db}')
         # read all the annotation into pandas dataframe
         logging.info('Reading annotation data from sqlite')
+        # self.annotation_df = pd.read_sql_query("SELECT ID, PATCH, ANNOTATION FROM annotation where PROMPT in (1, 2, 3)", self.annotation_conn)
         self.annotation_df = pd.read_sql_query("SELECT ID, PATCH, ANNOTATION FROM annotation", self.annotation_conn)
+        logging.info('exclude unvalid annotations')
+        self.annotation_df['patch_valid'] = self.annotation_df['PATCH'].apply(lambda x: isinstance(x, int))
+        self.annotation_df = self.annotation_df[self.annotation_df['patch_valid'] == True]
         self.annotation_df.rename(columns={'ANNOTATION': 'caption', 'PATCH': 'patch_id', 'ID': 'annotation_id'}, inplace=True)
         
         # the patch column stores the patch id, we use it to query the meta_db to get the image_info
@@ -105,7 +115,7 @@ class SQLiteDataset(Dataset):
         self.df = pd.merge(self.df, self.image_meta_df, on='image_name', how='left')
         logging.info('Merging annotation and meta data done')
         
-        ImageFile.LOAD_TRUNCATED_IMAGES = True
+        # ImageFile.LOAD_TRUNCATED_IMAGES = True
         
     def __len__(self):
         return len(self.df)
@@ -128,9 +138,9 @@ class SQLiteDataset(Dataset):
         return img, caption
         
     # disconnect the database connections
-    def __del__(self):
-        self.annotation_conn.close()
-        self.meta_conn.close()
+    # def __del__(self):
+    #     self.annotation_conn.close()
+    #     self.meta_conn.close()
 
 # test the dataset
 if __name__ == '__main__':
@@ -144,14 +154,17 @@ if __name__ == '__main__':
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
-    
+    # setting logging file
+    logging.basicConfig(level=logging.INFO, filename='test_dataset.log', filemode='w', format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     print('loading dataset')
     
-    dataset = SQLiteDataset(annotation_db='/mnt/FastDisk/GeJunYao/VLP/databases/backups/2024-3-19/annotation.db',
-                            meta_db='/mnt/FastDisk/GeJunYao/VLP/databases/backups/2024-3-19/metadata.db',
+    dataset = SQLiteDataset(#annotation_db='/mnt/FastDisk/GeJunYao/VLP/databases/backups/2024-3-19/annotation.db',
+                            annotation_db='/mnt/FastDisk/GeJunYao/VLP/databases/annotation.db',
+                            # meta_db='/mnt/FastDisk/GeJunYao/VLP/databases/backups/2024-3-19/metadata.db',
+                            meta_db='/mnt/FastDisk/GeJunYao/VLP/databases/metadata.db',
                             transforms=transform,
-                            img_data_backend=dict(type='disk', root='/mnt/SrvDataDisk/RSVLD'),
-                            # img_data_backend=dict(type='mongo', mongo_uri='mongodb://localhost:27017'),
+                            # img_data_backend=dict(type='disk', root='/mnt/SrvDataDisk/RSVLD'),
+                            img_data_backend=dict(type='mongo', mongo_uri='mongodb://localhost:27017'),
                             tokenizer=None)
     
     # test the throuput of querying a very large dictionary
@@ -167,7 +180,7 @@ if __name__ == '__main__':
     # test the througput of the dataset
     for i in tqdm(range(len(dataset))):
         img, caption = dataset[i]
-    
+    # print(dataset.df)
     # # define the dataloader
     # dataloader = DataLoader(dataset, batch_size=256, shuffle=True, num_workers=2)
     # # test the througput
