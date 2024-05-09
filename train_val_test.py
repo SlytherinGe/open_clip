@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from torch import optim
 from torch.cuda.amp.grad_scaler import GradScaler
+import torch.distributed as dist
 import time
 
 try:
@@ -56,6 +57,10 @@ def zero_shot_eval_during_training(model, test_dataloaders, epoch, args, tb_writ
         + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in zero_shot_metrics.items()])
     )
 
+    # calculate avarage accuracy and average top-1 accuracy
+    zero_shot_metrics['avg_acc'] = np.mean(list(zero_shot_metrics.values()))
+    zero_shot_metrics['avg_top1_acc'] = np.mean([v for k, v in zero_shot_metrics.items() if 'top1' in k])
+
     if args.save_logs:
         for name, val in zero_shot_metrics.items():
             if tb_writer is not None:
@@ -67,11 +72,11 @@ def zero_shot_eval_during_training(model, test_dataloaders, epoch, args, tb_writ
 
     # report to wandb
     # if args.wandb:
-        assert wandb is not None, 'Please install wandb.'
-        log_dict = {}
-        for name, val in zero_shot_metrics.items():
-            log_dict[f"val/{name}"] = val
-        wandb.log(log_dict, step=epoch)
+    #     assert wandb is not None, 'Please install wandb.'
+    #     log_dict = {}
+    #     for name, val in zero_shot_metrics.items():
+    #         log_dict[f"val/{name}"] = val
+    #     wandb.log(log_dict, step=epoch)
 
     logging.info('Finished zero-shot evaluation.')
     
@@ -446,6 +451,18 @@ def main(args):
             print(eval_metrics)
         return
 
+    # do zero-shot evaluation before training
+    if test_dataloaders is not None and args.zero_shot_at_start:
+        if is_master(args):
+            logging.info('Start zero-shot evaluation before training.')
+            eval_metrics = zero_shot_eval_during_training(model, test_dataloaders, start_epoch, args, tb_writer=writer)
+        else:
+            eval_metrics = zero_shot_eval_during_training(model, test_dataloaders, start_epoch, args, tb_writer=writer)
+        if args.wandb and is_master(args):
+            assert wandb is not None, 'Please install wandb.'
+            for name, val in eval_metrics.items():
+                wandb.log({f"eval/{name}": val, 'epoch': start_epoch})
+
     loss = create_loss(args)
 
     data['start_time'] = time.time()
@@ -461,14 +478,28 @@ def main(args):
             evaluate(model, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
 
         # evaluate zero-shot classification
-        if (test_dataloaders is not None) and (args.zeroshot_frequency and ((epoch % args.zeroshot_frequency) == 0 or epoch == args.epochs)):
-            eval_metrics = zero_shot_eval_during_training(model, test_dataloaders, completed_epoch, args, tb_writer=writer)
-
+        if (test_dataloaders is not None) and (args.zeroshot_frequency and (((epoch+1) % args.zeroshot_frequency) == 0 or (epoch+1) == args.epochs)):
+            
+            logging.info(f'Start zero-shot evaluation at epoch {completed_epoch}')
+            if is_master(args):
+                eval_metrics = zero_shot_eval_during_training(model, test_dataloaders, completed_epoch, args, tb_writer=writer)
+            else:
+                eval_metrics = zero_shot_eval_during_training(model, test_dataloaders, completed_epoch, args, tb_writer=writer)
+            
             if args.wandb and is_master(args):
                 assert wandb is not None, 'Please install wandb.'
+                val_cnt, val_acc = 0, 0
                 for name, val in eval_metrics.items():
+                    val_cnt += 1
+                    val_acc += val
                     wandb.log({f"eval/{name}": val, 'epoch': completed_epoch})
+                if val_cnt > 0:
+                    wandb.log({f"eval/avg_acc": val_acc/val_cnt})
 
+        if args.wandb and is_master(args):
+            assert wandb is not None, 'Please install wandb.'
+            wandb.log({'epoch': completed_epoch})
+        
         # Saving checkpoints.
         if args.save_logs:
             checkpoint_dict = {

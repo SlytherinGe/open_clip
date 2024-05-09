@@ -21,6 +21,7 @@ from torch.utils.data.distributed import DistributedSampler
 from webdataset.filters import _shuffle
 from webdataset.tariterators import base_plus_ext, url_opener, tar_file_expander, valid_sample
 from .db_data import SQLiteDataset
+from .annotation_sampler import WDSAnnotationSampler
 
 try:
     import horovod.torch as hvd
@@ -38,7 +39,7 @@ class CsvDataset(Dataset):
         self.transforms = transforms
         logging.debug('Done loading data.')
 
-        self.tokenize = tokenizer
+        self.tokenize = tokenizer if tokenizer is not None else lambda x: x.split()
 
     def __len__(self):
         return len(self.captions)
@@ -149,18 +150,18 @@ def get_imagenet(args, preprocess_fns, split):
             idxs[m] = arr
 
         idxs = idxs.astype('int')
-        sampler = SubsetRandomSampler(np.where(idxs)[0])
+        sampler = SubsetRandomSampler(np.where(idxs)[0]) # type: ignore
     else:
         sampler = None
 
-    dataloader = torch.utils.data.DataLoader(
+    dataloader = torch.utils.data.DataLoader( # type: ignore
         dataset,
         batch_size=args.batch_size,
         num_workers=args.workers,
         sampler=sampler,
     )
 
-    return DataInfo(dataloader=dataloader, sampler=sampler)
+    return DataInfo(dataloader=dataloader, sampler=sampler) # type: ignore
 
 
 def count_samples(dataloader):
@@ -348,6 +349,9 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
 
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
 
+    if args.skyscript_portion>=0 and args.laion_portion>=0:
+        args.train_data_upsampling_factors = f"1::{args.skyscript_portion}::{args.laion_portion}"
+
     if is_train and args.train_data_upsampling_factors is not None:
         assert resampled, "--train_data_upsampling_factors is only supported when sampling with replacement (with --dataset-resampled)."
     
@@ -369,7 +373,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
                     bufsize=_SHARD_SHUFFLE_SIZE,
                     initial=_SHARD_SHUFFLE_INITIAL,
                     seed=args.seed,
-                    epoch=shared_epoch,
+                    epoch=shared_epoch, # type: ignore
                 ),
                 wds.split_by_node,
                 wds.split_by_worker,
@@ -381,18 +385,19 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
                 bufsize=_SAMPLE_SHUFFLE_SIZE,
                 initial=_SAMPLE_SHUFFLE_INITIAL,
             ),
-        ])
+            WDSAnnotationSampler(args.annotation_db, dict(type='random'))
+        ]) # type: ignore
     else:
         pipeline.extend([
             wds.split_by_worker,
             # at this point, we have an iterator over the shards assigned to each worker
             wds.tarfile_to_samples(handler=log_and_continue),
-        ])
+        ]) # type: ignore
     pipeline.extend([
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
         wds.rename(image="jpg;png;jpeg;webp", text="txt"),
-        wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
+        wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]), # type: ignore
         wds.to_tuple("image", "text"),
         wds.batched(args.batch_size, partial=not is_train)
     ])

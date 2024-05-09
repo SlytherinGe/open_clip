@@ -215,6 +215,11 @@ def parse_args(args):
         "--zeroshot-frequency", type=int, default=2, help="How often to run zero shot."
     )
     parser.add_argument(
+        "--zero-shot-at-start",
+        default=False,
+        help="Run zero shot evaluation at the start of training.",
+    )
+    parser.add_argument(
         "--val-frequency", type=int, default=1, help="How often to run evaluation with val data."
     )
     parser.add_argument(
@@ -284,7 +289,8 @@ def parse_args(args):
     parser.add_argument('--aug-cfg', nargs='*', default={}, action=ParseKwargs)
     parser.add_argument(
         "--grad-checkpointing",
-        default=False,
+        # default=False,
+        default=dict(use_timm=True, color_jitter=0.4, scale="(0.67, 1.0)", ratio="(0.5, 2.0)"),
         action='store_true',
         help="Enable gradient checkpointing.",
     )
@@ -489,13 +495,26 @@ def parse_args(args):
         action="store_true",
         help='Use SigLip (sigmoid) loss.'
     )
-
+    # newly added for balancing the dataset
+    parser.add_argument(
+        "--skyscript-portion",
+        default=-1.0,
+        type=float,
+        help="Portion of the dataset to use for skyscript."
+    )
+    parser.add_argument(
+        "--laion-portion",
+        default=-1.0,
+        type=float,
+        help="Portion of the dataset to use for laion."
+    )
     # newly added for testing zero-shot and linear probe classification (custom dataset)
     parser.add_argument(
         "--datasets-for-testing",
         nargs='*',
         type=str,
-        default=None,
+        # default=None,
+        default=['aid','eurosat','nwpu','millionaid','rsicb','fmow','patternnet','SkyScript_cls'],
         help="A list of names of datasets for testing zero-shot classification testing",
     )
     parser.add_argument(
@@ -515,6 +534,12 @@ def parse_args(args):
         type=str,
         default=None,
         help="Path to file(s) with test data (e.g., for testing zero-shot classification)",
+    )
+    parser.add_argument(
+        "--test-batch-size",
+        type=int,
+        default=None,
+        help="Batch size for testing zero-shot classification.",
     )
     parser.add_argument(
         "--classnames",

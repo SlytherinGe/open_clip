@@ -118,7 +118,7 @@ def run(model, classifier, dataloader, args, dataset_name='unnamed', debugging=F
     all_img_paths = []
     with torch.no_grad():
         top1, top5, n = 0., 0., 0.
-        for tup in tqdm(dataloader, unit_scale=args.batch_size):
+        for tup in tqdm(dataloader, unit_scale=args.test_batch_size):
             if len(tup) == 2:
                 images, target = tup
                 image_paths = None
@@ -178,7 +178,7 @@ def run_binary(model, classifier, dataloader, args, dataset_name='unnamed', debu
     labels = []
     all_img_paths = []
     with torch.no_grad():
-        for tup in tqdm(dataloader, unit_scale=args.batch_size):
+        for tup in tqdm(dataloader, unit_scale=args.test_batch_size):
             if len(tup) == 2:
                 images, target = tup
                 image_paths = None
@@ -248,6 +248,10 @@ def run_binary(model, classifier, dataloader, args, dataset_name='unnamed', debu
 
 
 def get_test_dataloaders(args, preprocess_fn):
+    
+    if args.test_batch_size == None:
+        args.test_batch_size = args.batch_size
+    
     test_dataloaders = {}
     if args.datasets_for_testing is not None:
         benchmark_dataset_info = {}
@@ -309,7 +313,7 @@ def get_test_dataloaders(args, preprocess_fn):
             )
 
         test_dataloaders[dataset_name] = {
-            'dataloader': torch.utils.data.DataLoader(ds, batch_size=args.batch_size, num_workers=args.workers, 
+            'dataloader': DataLoader(ds, batch_size=args.test_batch_size, num_workers=args.workers*8, 
                                                       shuffle=False, sampler=None),
             'labels': label_list,
             'is_binary': benchmark_dataset_info[dataset_name]['classification_mode'] == 'binary',
@@ -360,7 +364,7 @@ def test(args):
    # random_seed(args.seed, args.rank)
 
     if args.trace:
-        model = trace_model(model, batch_size=args.batch_size, device=device)
+        model = trace_model(model, batch_size=args.test_batch_size, device=device)
 
     if args.distributed and not args.horovod:
         if args.use_bn_sync:

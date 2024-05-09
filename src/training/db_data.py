@@ -90,8 +90,8 @@ class SQLiteDataset(Dataset):
         self.img_read_fn = eval(f'_read_image_on_{self.backendtype}')
         self.read_kwargs = eval(f'_read_image_on_{self.backendtype}_init')(self.img_data_backend, self.read_kwargs)
                
-        self.annotation_conn = sqlite3.connect(self.annotation_db)
-        self.meta_conn = sqlite3.connect(self.meta_db)
+        self.annotation_conn = sqlite3.connect(self.annotation_db, timeout=60)
+        self.meta_conn = sqlite3.connect(self.meta_db, timeout=60)
         logging.info(f'annotation_db: {self.annotation_db}, meta_db: {self.meta_db}')
         # read all the annotation into pandas dataframe
         logging.info('Reading annotation data from sqlite')
