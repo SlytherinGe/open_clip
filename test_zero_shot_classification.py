@@ -24,6 +24,9 @@ from params import parse_args
 from prompt_templates import template_dict
 from benchmark_dataset_info import BENCHMARK_DATASET_INFOMATION
 
+from sklearn.metrics import confusion_matrix
+from sklearn.utils.multiclass import unique_labels
+
 Image.MAX_IMAGE_PIXELS = 1000000000 
 
 def random_seed(seed=42, rank=0):
@@ -31,6 +34,55 @@ def random_seed(seed=42, rank=0):
     np.random.seed(seed + rank)
     random.seed(seed + rank)
 
+
+def plot_confusion_matrix(y_true, y_pred, classes,
+                          normalize=False,
+                          title=None,
+                          cmap=plt.cm.Blues):
+    """
+    This function prints and plots the confusion matrix.
+    Normalization can be applied by setting `normalize=True`.
+    """
+
+    if not title:
+        if normalize:
+            title = 'Normalized confusion matrix'
+        else:
+            title = 'Confusion matrix, without normalization'
+
+    # Compute confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+    # Only use the labels that appear in the data
+    classes = classes[unique_labels(y_true, y_pred)]
+    if normalize:
+        cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+
+    fig, ax = plt.subplots(figsize=(20, 20))
+    im = ax.imshow(cm, interpolation='nearest', cmap=cmap)
+    ax.figure.colorbar(im, ax=ax)
+    # We want to show all ticks...
+    ax.set(xticks=np.arange(cm.shape[1]),
+           yticks=np.arange(cm.shape[0]),
+           # ... and label them with the respective list entries
+           xticklabels=classes, yticklabels=classes,
+           title=title,
+           ylabel='True label',
+           xlabel='Predicted label')
+
+    # Rotate the tick labels and set their alignment.
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
+             rotation_mode="anchor")
+
+    # Loop over data dimensions and create text annotations.
+    fmt = '.2f' if normalize else 'd'
+    thresh = cm.max() / 2.
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            ax.text(j, i, format(cm[i, j], fmt),
+                    ha="center", va="center",
+                    color="white" if cm[i, j] > thresh else "black")
+    fig.tight_layout()
+    return fig, ax
 
 class CsvDatasetForClassification(Dataset):
     """Dataset for multiclass classification"""
@@ -313,7 +365,7 @@ def get_test_dataloaders(args, preprocess_fn):
             )
 
         test_dataloaders[dataset_name] = {
-            'dataloader': DataLoader(ds, batch_size=args.test_batch_size, num_workers=args.workers*8, 
+            'dataloader': DataLoader(ds, batch_size=args.test_batch_size, num_workers=args.workers*4, 
                                                       shuffle=False, sampler=None),
             'labels': label_list,
             'is_binary': benchmark_dataset_info[dataset_name]['classification_mode'] == 'binary',
@@ -386,6 +438,10 @@ def test(args):
                                                 dataset_name=dataset_name, debugging=args.debugging)
         for k in results:
             results_all[k] = results[k]
+    
+    # calculate avarage accuracy and average top-1 accuracy
+    results_all['avg_acc'] = np.mean(list(results_all.values()))
+    results_all['avg_top1_acc'] = np.mean([v for k, v in results_all.items() if 'top1' in k])
     
 #     print(results_all)
     if args.test_result_save_path:

@@ -590,6 +590,27 @@ def parse_args(args):
         help="Whether to use debugging mode, which will return more information."
     )
     
+    parser.add_argument(
+        "--domain-data-portion",
+        type=float,
+        default=None,
+        help="Portion of the dataset to use for domain adaptation." 
+    )
+    
+    parser.add_argument(
+        "--data-regulazation-portion",
+        type=float,
+        default=None,
+        help="Portion of the dataset to use for data regulazation." 
+    )
+    
+    parser.add_argument(
+        "--plot-confusion-matrix",
+        action="store_true",
+        default=True,
+        help="Whether to plot confusion matrix for classification testing."
+    )
+    
     args = parser.parse_args(args)
 
     # If some params are not passed, we use the default values based on model name.

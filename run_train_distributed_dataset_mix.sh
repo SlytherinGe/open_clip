@@ -16,7 +16,7 @@ torchrun --nproc_per_node=$NUM_GPUS train_val_test.py \
     --test-dataset-root $TEST_DATASET_ROOT \
     --model $MODEL \
     --name $NAME \
-    --datasets-for-testing 'aid' 'eurosat' 'nwpu' 'millionaid' 'rsicb' 'fmow' 'patternnet' 'SkyScript_cls'\
+    --datasets-for-testing 'rsicb'\
     --pretrained $PRETRAINED_CHECKPOINT \
     --dataset-type $TRAIN_DATASET \
     --annotation-db $ANNOTATION_DB \
@@ -47,3 +47,4 @@ torchrun --nproc_per_node=$NUM_GPUS train_val_test.py \
     # --grad-checkpointing \
     # --train-data "/mnt/FastDisk/Datasets/RSVLD1M/Patches{0000..0238}.tar" \
     # num of RSVLD 1190742
+    # --datasets-for-testing 'aid' 'eurosat' 'nwpu' 'millionaid' 'rsicb' 'fmow' 'patternnet' 'SkyScript_cls'\

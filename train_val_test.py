@@ -40,24 +40,40 @@ from test_zero_shot_classification import *
 
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
 
+
 def zero_shot_eval_during_training(model, test_dataloaders, epoch, args, tb_writer=None):
     logging.info('Starting zero-shot evaluation.')
     zero_shot_metrics = {}
+    
+    debugging = True if args.plot_confusion_matrix else False
+    
+    if debugging:
+        confusion_matrix_plts= {}
+    
     for dataset_name in test_dataloaders:
         logging.info(f'Evaluating zero-shot classification for dataset {dataset_name}')
         results = test_zero_shot_classification(model, test_dataloaders[dataset_name]['dataloader'], 
                                                 test_dataloaders[dataset_name]['labels'], 
                                                 test_dataloaders[dataset_name]['is_binary'], args, 
-                                                dataset_name=dataset_name, debugging=args.debugging)
+                                                dataset_name=dataset_name, debugging=debugging)
         for k, v in results.items():
             if type(v) in [float, int, np.float16, np.float32, np.float64, np.int8, np.int16, np.int32, np.int64]:
                 zero_shot_metrics[k] = v
+
+        if debugging:
+            gts = results[dataset_name.replace(':', '_') + '-labels']
+            predictions = results[dataset_name.replace(':', '_') + '-predictions']
+            if dataset_name not in confusion_matrix_plts.keys():
+                confusion_matrix_plts[dataset_name], _ = plot_confusion_matrix(gts, 
+                                                                            predictions, 
+                                                                            classes=np.array(test_dataloaders[dataset_name]['labels']),
+                                                                            title=dataset_name)
+
     logging.info(
         f"Zero-Shot Eval Epoch: {epoch} "
         + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in zero_shot_metrics.items()])
     )
 
-    # calculate avarage accuracy and average top-1 accuracy
     zero_shot_metrics['avg_acc'] = np.mean(list(zero_shot_metrics.values()))
     zero_shot_metrics['avg_top1_acc'] = np.mean([v for k, v in zero_shot_metrics.items() if 'top1' in k])
 
@@ -70,15 +86,10 @@ def zero_shot_eval_during_training(model, test_dataloaders, epoch, args, tb_writ
             f.write(json.dumps(zero_shot_metrics))
             f.write("\n")
 
-    # report to wandb
-    # if args.wandb:
-    #     assert wandb is not None, 'Please install wandb.'
-    #     log_dict = {}
-    #     for name, val in zero_shot_metrics.items():
-    #         log_dict[f"val/{name}"] = val
-    #     wandb.log(log_dict, step=epoch)
-
     logging.info('Finished zero-shot evaluation.')
+    
+    if debugging:
+        zero_shot_metrics['confusion_matrix_plts'] = confusion_matrix_plts
     
     return zero_shot_metrics
 
@@ -455,11 +466,24 @@ def main(args):
     if test_dataloaders is not None and args.zero_shot_at_start:
         if is_master(args):
             logging.info('Start zero-shot evaluation before training.')
+            start_time = time.time()
             eval_metrics = zero_shot_eval_during_training(model, test_dataloaders, start_epoch, args, tb_writer=writer)
+            end_time = time.time()
+            logging.info(f'End zero-shot evaluation in {end_time - start_time:.2f} seconds.')
         else:
-            eval_metrics = zero_shot_eval_during_training(model, test_dataloaders, start_epoch, args, tb_writer=writer)
+            # sleep 10 min to avoid race condition with other processes
+            time.sleep(300)
+        if dist.is_initialized():
+            dist.barrier()
+            # eval_metrics = zero_shot_eval_during_training(model, test_dataloaders, start_epoch, args, tb_writer=writer)
         if args.wandb and is_master(args):
             assert wandb is not None, 'Please install wandb.'
+            
+            if args.plot_confusion_matrix:
+                matrix = eval_metrics.pop('confusion_matrix_plts')
+                for name, matrix_plt in matrix.items():
+                    wandb.log({f"eval/{name}"+"_confusion_matrix": wandb.Image(matrix_plt)})
+            
             for name, val in eval_metrics.items():
                 wandb.log({f"eval/{name}": val, 'epoch': start_epoch})
 
@@ -470,7 +494,7 @@ def main(args):
     for epoch in range(start_epoch, args.epochs):
         if is_master(args):
             logging.info(f'Start epoch {epoch}')
-
+        dist.barrier()
         train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
         completed_epoch = epoch + 1
 
@@ -483,18 +507,16 @@ def main(args):
             logging.info(f'Start zero-shot evaluation at epoch {completed_epoch}')
             if is_master(args):
                 eval_metrics = zero_shot_eval_during_training(model, test_dataloaders, completed_epoch, args, tb_writer=writer)
+                dist.barrier()
             else:
-                eval_metrics = zero_shot_eval_during_training(model, test_dataloaders, completed_epoch, args, tb_writer=writer)
-            
+                # eval_metrics = zero_shot_eval_during_training(model, test_dataloaders, completed_epoch, args, tb_writer=writer)
+                # sleep 20 min to avoid race condition with other processes
+                time.sleep(300)
+                dist.barrier()
             if args.wandb and is_master(args):
                 assert wandb is not None, 'Please install wandb.'
-                val_cnt, val_acc = 0, 0
                 for name, val in eval_metrics.items():
-                    val_cnt += 1
-                    val_acc += val
-                    wandb.log({f"eval/{name}": val, 'epoch': completed_epoch})
-                if val_cnt > 0:
-                    wandb.log({f"eval/avg_acc": val_acc/val_cnt})
+                    wandb.log({f"eval/{name}": val})
 
         if args.wandb and is_master(args):
             assert wandb is not None, 'Please install wandb.'

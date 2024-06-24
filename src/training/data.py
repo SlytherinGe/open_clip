@@ -333,6 +333,26 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     assert input_shards is not None
     resampled = getattr(args, 'dataset_resampled', False) and is_train
 
+    if args.skyscript_portion>=0 and args.laion_portion>=0:
+        args.train_data_upsampling_factors = f"1::{args.skyscript_portion}::{args.laion_portion}"
+
+    if args.domain_data_portion is not None:
+        assert isinstance(args.domain_data_portion, float) and 0 <= args.domain_data_portion <= 1, \
+            f"domain_data_portion should be a float between 0 and 1, but got {args.domain_data_portion}."
+        num_rsteller = 2488783#, num_tar_files = 239
+        num_skyscript = 2554817#, num_tar_files = 511
+        num_laion_sub = 6005000#, num_tar_files = 1201
+        max_rsteller_tar_id = math.floor((239 - 1) * args.domain_data_portion)
+        max_skyscript_tar_id = math.floor((511 - 1) * args.domain_data_portion)
+        logging.info(input_shards)
+        input_shards = input_shards.format(max_rsteller_tar_id=max_rsteller_tar_id, max_skyscript_tar_id=max_skyscript_tar_id)
+        logging.info('input_shards: {}'.format(input_shards))
+        if args.data_regulazation_portion is not None:
+            assert isinstance(args.data_regulazation_portion, float) and 0 <= args.data_regulazation_portion <= 1, \
+                f"data_regulazation_portion should be a float between 0 and 1, but got {args.data_regulazation_portion}."
+            laion_portion = (num_rsteller + num_skyscript) / num_laion_sub * args.data_regulazation_portion * args.domain_data_portion
+            args.train_data_upsampling_factors = f"1::1::{laion_portion}"
+        
     num_shards = None
     if is_train:
         if args.train_num_samples is not None:
@@ -349,8 +369,7 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
 
     shared_epoch = SharedEpoch(epoch=epoch)  # create a shared epoch store to sync epoch to dataloader worker proc
 
-    if args.skyscript_portion>=0 and args.laion_portion>=0:
-        args.train_data_upsampling_factors = f"1::{args.skyscript_portion}::{args.laion_portion}"
+        
 
     if is_train and args.train_data_upsampling_factors is not None:
         assert resampled, "--train_data_upsampling_factors is only supported when sampling with replacement (with --dataset-resampled)."
