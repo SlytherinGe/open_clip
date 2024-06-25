@@ -7,6 +7,7 @@ torchrun --nproc_per_node=4 train_val_test.py \
  --model=ViT-L-14 \
  --dataset-type=webdataset \
  --annotation-db=$ANNOTATION_DB \
+ --datasets-for-testing 'aid' \
  --report-to=wandb \
  --wandb-project-name=openclip-RSVLD \
  --save-frequency=1 \

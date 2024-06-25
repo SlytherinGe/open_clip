@@ -339,10 +339,13 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     if args.domain_data_portion is not None:
         assert isinstance(args.domain_data_portion, float) and 0 <= args.domain_data_portion <= 1, \
             f"domain_data_portion should be a float between 0 and 1, but got {args.domain_data_portion}."
-        num_rsteller = 2488783#, num_tar_files = 239
+        # num_rsteller = 2488783
+        # num_tar_files = 239
+        num_rsteller = 2539256
+        num_tar_files = 240
         num_skyscript = 2554817#, num_tar_files = 511
         num_laion_sub = 6005000#, num_tar_files = 1201
-        max_rsteller_tar_id = math.floor((239 - 1) * args.domain_data_portion)
+        max_rsteller_tar_id = math.floor((num_tar_files - 1) * args.domain_data_portion)
         max_skyscript_tar_id = math.floor((511 - 1) * args.domain_data_portion)
         logging.info(input_shards)
         input_shards = input_shards.format(max_rsteller_tar_id=max_rsteller_tar_id, max_skyscript_tar_id=max_skyscript_tar_id)
