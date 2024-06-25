@@ -138,7 +138,6 @@ def test_zero_shot_retrieval(model, dataloaders, args, debugging=False):
     
     autocast = get_autocast(args.precision)
     cast_dtype = get_cast_dtype(args.precision)
-
     dataloader_image = dataloaders['dataloader_image']
     dataloader_text = dataloaders['dataloader_text']
     batch_size = dataloaders['batch_size']
@@ -155,26 +154,32 @@ def test_zero_shot_retrieval(model, dataloaders, args, debugging=False):
     with torch.no_grad():
         for batch in tqdm(dataloader_image, unit_scale=batch_size, desc='Extracting image features'):
             images, image_paths = batch
-            if cast_dtype:
-                images = images.to(device, dtype=cast_dtype)
-            else:
-                images = images.to(device)
+            if cast_dtype is not None:
+                images = images.to(dtype=cast_dtype)
+            images = images.to(device)
             with autocast():
-                image_features = model.encode_image(images)
+                if args.distributed and not args.horovod:
+                    image_features = model.module.encode_image(images)
+                else:
+                    image_features = model.encode_image(images)
                 all_image_features.append(image_features.cpu())
                 all_image_paths.extend(image_paths)
         for batch in tqdm(dataloader_text, unit_scale=batch_size, desc='Extracting text features'):
             texts, original_texts = batch
-            if cast_dtype:
-                texts = texts.to(device, dtype=cast_dtype)
-            else:
-                texts = texts.to(device)
+            texts = texts.to(device)
             with autocast():
-                text_feature = model.encode_text(texts, normalize=True)
+                if args.distributed and not args.horovod:
+                    text_feature = model.module.encode_text(texts, normalize=True)
+                else:
+                    text_feature = model.encode_text(texts, normalize=True)
                 all_text_features.append(text_feature.cpu())
                 all_text_original_texts.extend(original_texts)
+    with autocast():
         all_image_features = torch.cat(all_image_features, dim=0)
         all_text_features = torch.cat(all_text_features, dim=0)
+        print(f'dtype befor normalization: {all_image_features.dtype}')
+        all_image_features = F.normalize(all_image_features, dim=1).to(dtype=all_text_features.dtype)
+        print(f'dtype after normalization: {all_image_features.dtype}')
     
     text_indices = {x: i for i, x in enumerate(all_text_original_texts)}
     img_indices = {x: i for i, x in enumerate(all_image_paths)}
@@ -198,8 +203,8 @@ def test_zero_shot_retrieval(model, dataloaders, args, debugging=False):
     res.update({'img2text_R@' + str(k): 0 for k in [1, 5, 10, 100]})
     
     # text to image
-    logit_scale = 100
-    for i in tqdm(range(len(all_text_original_texts))):
+    logit_scale = 100.
+    for i in tqdm(range(len(all_text_original_texts)), desc='Text to Image Retrieval'):
         text_feature = all_text_features[i]
         logits = logit_scale * text_feature @ all_image_features.t()
         ranking = torch.argsort(logits, descending=True).cpu().numpy()
@@ -212,7 +217,7 @@ def test_zero_shot_retrieval(model, dataloaders, args, debugging=False):
         
     # image to text
     logit_scale = 100
-    for i in tqdm(range(len(all_image_paths))):
+    for i in tqdm(range(len(all_image_paths)), desc='Image to Text Retrieval'):
         image_feature = all_image_features[i]
         logits = logit_scale * image_feature @ all_text_features.t()
         ranking = torch.argsort(logits, descending=True).cpu().numpy()

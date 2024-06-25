@@ -568,6 +568,7 @@ def main(args):
             print(ret_metrics)
         return
 
+
     # do zero-shot evaluation before training
     if test_dataloaders is not None and args.zero_shot_at_start:
         if is_master(args):
@@ -578,6 +579,7 @@ def main(args):
             logging.info(f'End zero-shot evaluation in {end_time - start_time:.2f} seconds.')
         else:
             # sleep 10 min to avoid race condition with other processes
+            # pass
             time.sleep(300)
         if dist.is_initialized():
             dist.barrier()
@@ -592,6 +594,7 @@ def main(args):
             
             for name, val in eval_metrics.items():
                 wandb.log({f"eval/{name}": val, 'epoch': start_epoch})
+
     # do zero-shot retrieval evaluation before training
     if retrieval_dataloaders is not None and args.zero_shot_at_start:
         if is_master(args):
@@ -622,7 +625,7 @@ def main(args):
             evaluate(model, data, completed_epoch, args, tb_writer=writer, tokenizer=tokenizer)
 
         # evaluate zero-shot classification
-        if (test_dataloaders is not None) and (args.zeroshot_frequency and (((epoch+1) % args.zeroshot_frequency) == 0 or (epoch+1) == args.epochs)):
+        if (test_dataloaders is not None) and (args.zeroshot_frequency and ((completed_epoch % args.zeroshot_frequency) == 0 or completed_epoch == args.epochs)):
             
             logging.info(f'Start zero-shot evaluation at epoch {completed_epoch}')
             if is_master(args):
@@ -637,6 +640,22 @@ def main(args):
                 assert wandb is not None, 'Please install wandb.'
                 for name, val in eval_metrics.items():
                     wandb.log({f"eval/{name}": val})
+
+        # do zero-shot retrieval evaluation during training
+        if retrieval_dataloaders is not None and (args.zeroshot_frequency and ((completed_epoch % args.zeroshot_frequency) == 0 or completed_epoch == args.epochs)):
+            
+            logging.info(f'Start zero-shot retrieval evaluation at epoch {completed_epoch}')
+            if is_master(args):
+                start_time = time.time()
+                ret_metrics = zero_shot_retrieval_eval_during_training(model, retrieval_dataloaders, start_epoch, args, tb_writer=writer)
+                end_time = time.time()
+                logging.info(f'End zero-shot retrieval evaluation in {end_time - start_time:.2f} seconds.')
+            if dist.is_initialized():
+                dist.barrier()
+            if args.wandb and is_master(args):
+                assert wandb is not None, 'Please install wandb.'
+                for name, val in ret_metrics.items():
+                    wandb.log({f"ret/{name}": val, 'epoch': start_epoch})
 
         if args.wandb and is_master(args):
             assert wandb is not None, 'Please install wandb.'
