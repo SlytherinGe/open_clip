@@ -28,7 +28,7 @@ except ImportError:
 
 from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
 from training.data import get_data
-from training.distributed import is_master, init_distributed_device, broadcast_object
+from training.distributed import is_master, init_distributed_device, broadcast_object, all_gather_object
 from training.logger import setup_logging
 from training.scheduler import cosine_lr, const_lr, const_lr_cooldown
 from training.train import train_one_epoch, evaluate
@@ -36,6 +36,7 @@ from training.file_utils import pt_load, check_exists, start_sync_process, remot
 from training.main import get_latest_checkpoint, copy_codebase
 from params import parse_args
 from test_zero_shot_classification import *
+from test_zero_shot_retrieval import get_retrieval_dataloader, test_zero_shot_retrieval
 
 
 LATEST_CHECKPOINT_NAME = "epoch_latest.pt"
@@ -93,6 +94,103 @@ def zero_shot_eval_during_training(model, test_dataloaders, epoch, args, tb_writ
     
     return zero_shot_metrics
 
+
+def zero_shot_retrieval_eval_during_training(model, test_dataloaders, epoch, args, tb_writer=None):
+    logging.info('Starting zero-shot retrieval evaluation.')
+    zero_shot_metrics = {}
+    
+    for dataset_name in test_dataloaders:
+        logging.info(f'Evaluating zero-shot retrieval for dataset {dataset_name}')
+        results = test_zero_shot_retrieval(model, test_dataloaders[dataset_name], 
+                                            args)
+        for k, v in results.items():
+            if type(v) in [float, int, np.float16, np.float32, np.float64, np.int8, np.int16, np.int32, np.int64]:
+                zero_shot_metrics['_'.join([dataset_name, k])] = v
+                
+    
+    logging.info(
+        f"Zero-Shot Retrieval Eval Epoch: {epoch} "
+        + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in zero_shot_metrics.items()])
+    )
+
+    if args.save_logs:
+        for name, val in zero_shot_metrics.items():
+            if tb_writer is not None:
+                tb_writer.add_scalar(f"ret/{name}", val, epoch)
+
+        with open(os.path.join(args.checkpoint_path, "results.jsonl"), "a+") as f:
+            f.write(json.dumps(zero_shot_metrics))
+            f.write("\n")
+
+    logging.info('Finished zero-shot retrieval evaluation.')
+    
+    return zero_shot_metrics
+
+def zero_shot_eval_during_training_multi_gpu(model, test_dataloaders, epoch, args, tb_writer=None):
+    # FIXME: This function is tested not working properly.
+    
+    logging.info('Starting zero-shot evaluation with multi-gpu.')
+    zero_shot_metrics = {}
+    
+    world_size = dist.get_world_size()
+    rank = dist.get_rank()
+    print(f'World size: {world_size}')
+    
+    # split test_dataloaders into subsets for each rank
+    num_subsets = world_size
+    subsets = [[] for _ in range(num_subsets)]
+        
+    for i, dataset_name in enumerate(test_dataloaders):
+        subsets[i % num_subsets].append(dataset_name)
+        
+    # broadcast subsets to all ranks
+    subsets = broadcast_object(args, subsets)
+    test_dataloaders = broadcast_object(args, test_dataloaders)
+    # evaluate on each subset
+    for i in range(num_subsets):
+        if i == rank:
+            metrics = zero_shot_eval_during_training(model, 
+                                                     {dataset_name: test_dataloaders[dataset_name] for dataset_name in subsets[i]}, 
+                                                     epoch, args, tb_writer, multi_gpu=True)
+            # remote avg_acc to all ranks
+            metrics.pop('avg_acc')
+            metrics.pop('avg_top1_acc')
+    # gather results from all ranks
+    dist.barrier()
+    if is_master(args):
+        all_metrics = all_gather_object(args, metrics)
+        # transfer all_metrics to zero_shot_metrics
+        if args.debug:
+            confusion_matrix_plts_all = {}
+        for metrics in all_metrics:
+            confusion_matrix_plts = metrics.pop('confusion_matrix_plts', None)
+            if confusion_matrix_plts is not None:
+                confusion_matrix_plts_all.update(confusion_matrix_plts)
+            for k, v in metrics.items():
+                if k not in zero_shot_metrics:
+                    zero_shot_metrics[k] = v
+                    
+        zero_shot_metrics['avg_acc'] = np.mean(list(zero_shot_metrics.values()))
+        zero_shot_metrics['avg_top1_acc'] = np.mean([v for k, v in zero_shot_metrics.items() if 'top1' in k])
+
+        zero_shot_metrics['confusion_matrix_plts'] = confusion_matrix_plts_all
+        
+        logging.info(
+            f"Zero-Shot Eval Epoch: {epoch} "
+            + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in zero_shot_metrics.items()])
+        )
+   
+    if args.save_logs:
+        for name, val in zero_shot_metrics.items():
+            if tb_writer is not None:
+                tb_writer.add_scalar(f"val/{name}", val, epoch)
+
+        with open(os.path.join(args.checkpoint_path, "results.jsonl"), "a+") as f:
+            f.write(json.dumps(zero_shot_metrics))
+            f.write("\n")
+        
+    return zero_shot_metrics
+    
 def main(args):
     args = parse_args(args)
 
@@ -392,6 +490,11 @@ def main(args):
         test_dataloaders = None
     assert len(data) or test_dataloaders is not None, 'At least one train, eval or test dataset must be specified.'
 
+    if args.datasets_for_retrieval is not None:
+        retrieval_dataloaders = get_retrieval_dataloader(args, preprocess_val)
+    else:
+        retrieval_dataloaders = None
+    
     # create scheduler if train
     scheduler = None
     if 'train' in data and optimizer is not None:
@@ -460,6 +563,9 @@ def main(args):
         if test_dataloaders is not None:
             eval_metrics = zero_shot_eval_during_training(model, test_dataloaders, start_epoch, args, tb_writer=writer)
             print(eval_metrics)
+        if retrieval_dataloaders is not None:
+            ret_metrics = zero_shot_retrieval_eval_during_training(model, retrieval_dataloaders, start_epoch, args, tb_writer=writer)
+            print(ret_metrics)
         return
 
     # do zero-shot evaluation before training
@@ -486,6 +592,20 @@ def main(args):
             
             for name, val in eval_metrics.items():
                 wandb.log({f"eval/{name}": val, 'epoch': start_epoch})
+    # do zero-shot retrieval evaluation before training
+    if retrieval_dataloaders is not None and args.zero_shot_at_start:
+        if is_master(args):
+            logging.info('Start zero-shot retrieval evaluation before training.')
+            start_time = time.time()
+            ret_metrics = zero_shot_retrieval_eval_during_training(model, retrieval_dataloaders, start_epoch, args, tb_writer=writer)
+            end_time = time.time()
+            logging.info(f'End zero-shot retrieval evaluation in {end_time - start_time:.2f} seconds.')
+        if dist.is_initialized():
+            dist.barrier()
+        if args.wandb and is_master(args):
+            assert wandb is not None, 'Please install wandb.'
+            for name, val in ret_metrics.items():
+                wandb.log({f"ret/{name}": val, 'epoch': start_epoch})
 
     loss = create_loss(args)
 

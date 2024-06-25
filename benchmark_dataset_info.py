@@ -1,5 +1,6 @@
 # Please replace this with the root directory of benchmark datasets
 BENCHMARK_DATASET_ROOT_DIR = '{}'
+RETRIEVAL_DATASET_ROOT_DIR = '/mnt/FastDisk/Datasets/RSCaptionDatasets'
 
 BENCHMARK_DATASET_INFOMATION = {
     'aid': {
@@ -66,4 +67,12 @@ BENCHMARK_DATASET_INFOMATION = {
         'csv_img_key': 'filepath',
         'csv_class_key': 'label',
     },
+}
+
+
+DATASET_CSV_FILE_PATH = {
+    'SkyScript': f'{RETRIEVAL_DATASET_ROOT_DIR}/SkyScript_test_30K_filtered_by_CLIP_openai.csv',
+    'RSICD': f'{RETRIEVAL_DATASET_ROOT_DIR}/RSICD/RSICD_img_txt_pairs_test.csv',
+    'RSITMD': f'{RETRIEVAL_DATASET_ROOT_DIR}/RSITMD/RSITMD_img_txt_pairs_test.csv',
+    'ucmcaptions': f'{RETRIEVAL_DATASET_ROOT_DIR}/ucmcaptions/ucmcaptions_img_txt_pairs_test.csv',
 }

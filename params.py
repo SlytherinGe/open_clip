@@ -611,6 +611,14 @@ def parse_args(args):
         help="Whether to plot confusion matrix for classification testing."
     )
     
+    parser.add_argument(
+        "--datasets-for-retrieval",
+        nargs='*',
+        type=str,
+        default=['RSICD', 'RSITMD', 'ucmcaptions'],
+        help="A list of names of datasets for retrieval testing"
+    )
+    
     args = parser.parse_args(args)
 
     # If some params are not passed, we use the default values based on model name.
