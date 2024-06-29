@@ -75,8 +75,8 @@ def zero_shot_eval_during_training(model, test_dataloaders, epoch, args, tb_writ
         + "\t".join([f"{k}: {round(v, 4):.4f}" for k, v in zero_shot_metrics.items()])
     )
 
-    zero_shot_metrics['avg_acc'] = np.mean(list(zero_shot_metrics.values()))
     zero_shot_metrics['avg_top1_acc'] = np.mean([v for k, v in zero_shot_metrics.items() if 'top1' in k])
+    zero_shot_metrics['avg_top1_acc_wo_skyscript'] = np.mean([v for k, v in zero_shot_metrics.items() if 'top1' in k and 'SkyScript' not in k])
 
     if args.save_logs:
         for name, val in zero_shot_metrics.items():

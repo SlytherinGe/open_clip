@@ -228,7 +228,7 @@ def test_zero_shot_retrieval(model, dataloaders, args, debugging=False):
     for k in [1, 5, 10, 100]:
         res['img2text_R@' + str(k)] /= len(all_image_paths)
         
-    res['text2img_avg'] = sum([res['img2text_R@'+str(level)] for level in [1,5,10]]) / 3
-    res['img2text_avg'] = sum([res['text2img_R@'+str(level)] for level in [1,5,10]]) / 3
+    res['text2img_avg'] = sum([res['text2img_R@'+str(level)] for level in [1,5,10]]) / 3
+    res['img2text_avg'] = sum([res['img2text_R@'+str(level)] for level in [1,5,10]]) / 3
     
     return res

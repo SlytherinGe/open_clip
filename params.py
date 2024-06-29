@@ -286,11 +286,14 @@ def parse_args(args):
         default=None, type=str, choices=['shortest', 'longest', 'squash'],
         help="Override default image resize (& crop) mode during inference"
     )
-    parser.add_argument('--aug-cfg', nargs='*', default={}, action=ParseKwargs)
+    parser.add_argument('--aug-cfg', 
+                        nargs='*',
+                        default=None,
+                        action=ParseKwargs)
     parser.add_argument(
         "--grad-checkpointing",
         # default=False,
-        default=dict(use_timm=True, color_jitter=0.4, scale="(0.67, 1.0)", ratio="(0.5, 2.0)"),
+        # default=dict(use_timm=True, color_jitter=0.4, scale="(0.67, 1.0)", ratio="(0.5, 2.0)"),
         action='store_true',
         help="Enable gradient checkpointing.",
     )
